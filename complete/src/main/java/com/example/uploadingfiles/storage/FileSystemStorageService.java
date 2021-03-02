@@ -9,6 +9,10 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.stream.Stream;
 
+import org.apache.tika.Tika;
+import org.apache.tika.io.TikaInputStream;
+import org.apache.tika.metadata.Metadata;
+import org.apache.tika.mime.MediaType;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
@@ -21,6 +25,7 @@ import org.springframework.web.multipart.MultipartFile;
 public class FileSystemStorageService implements StorageService {
 
 	private final Path rootLocation;
+	private final Tika tika = new Tika();
 
 	@Autowired
 	public FileSystemStorageService(StorageProperties properties) {
@@ -41,9 +46,14 @@ public class FileSystemStorageService implements StorageService {
 				throw new StorageException(
 						"Cannot store file outside current directory.");
 			}
+
+			checkContentType(file);
+
 			try (InputStream inputStream = file.getInputStream()) {
 				Files.copy(inputStream, destinationFile,
 					StandardCopyOption.REPLACE_EXISTING);
+				destinationFile.toFile().setExecutable(false);
+				destinationFile.toFile().setWritable(false);
 			}
 		}
 		catch (IOException e) {
@@ -100,6 +110,31 @@ public class FileSystemStorageService implements StorageService {
 		}
 		catch (IOException e) {
 			throw new StorageException("Could not initialize storage", e);
+		}
+	}
+
+	private void checkContentType(MultipartFile file)  {
+		try (InputStream inputStream = file.getInputStream()) {
+
+			String contentType = file.getContentType();
+
+			// necessary to give a hint to Tika, otherwise it can recognise "image/png" as "application/octet-stream"
+			Metadata metadata = new Metadata();
+			metadata.set(Metadata.RESOURCE_NAME_KEY, file.getName());
+			metadata.set(Metadata.CONTENT_TYPE, contentType);
+
+			final String detectedType = tika
+					.detect(TikaInputStream.get(inputStream), metadata);
+
+			if (!contentType.equals(detectedType)) {
+				// This is a security check
+				throw new StorageException(
+						"Content type of the provided file does not correspond to the detected type: " + detectedType);
+			}
+		} catch (IOException e) {
+
+			throw new StorageException(
+					"Cannot detect the file mime type.");
 		}
 	}
 }
